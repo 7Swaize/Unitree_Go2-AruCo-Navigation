@@ -1,6 +1,5 @@
 
 import struct
-import threading
 
 from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowState_ # specific to using Go2
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize
@@ -8,24 +7,10 @@ from unitree_sdk2py.go2.sport.sport_client import SportClient
 
 from dataclasses import dataclass
 from collections.abc import Callable
-from typing import Dict, List, Optional
+from typing import List, Optional
 from abc import ABC, abstractmethod
 from enum import Enum, auto
-from concurrent.futures import ThreadPoolExecutor
 
-
-class CallbackPriority(Enum):
-    LOW = 1
-    MEDIUM = 2
-    HIGH = 3
-    CRITICAL = 4
-
-class RobotState(Enum):
-    IDLE = 1
-    MOVEMENT = 2
-    PATHFINDING = 3
-    EMERGENCY = 4
-    CUSTOM = 5
 
 @dataclass
 class ControllerState:
@@ -55,53 +40,6 @@ class ControllerState:
     f3: float = 0.0
 
     changed: bool = False
-    
-@dataclass
-class CallbackInfo:
-    callback: Callable[[ControllerState], None]
-    priority : CallbackPriority
-    states: List[RobotState]
-    name: Optional[str] = None
-    enabled: bool = True
-
-# https://docs.python.org/3/library/abc.html
-class StateHandler(ABC):
-    def __init__(self, sport_client: SportClient) -> None:
-        super().__init__()
-
-        self.sport_client = sport_client
-
-    @abstractmethod
-    def on_enter(self, previous_state: RobotState) -> None:
-        pass
-
-    @abstractmethod
-    def on_exit(self, next_state: RobotState) -> None:
-        pass
-
-    @abstractmethod
-    def handle_controller_input(self, controller_state: ControllerState) -> None:
-        pass
-
-class IdleStateHandler(StateHandler):
-    def on_enter(self, previous_state: RobotState) -> None:
-        pass
-    
-    def on_exit(self, next_state: RobotState) -> None:
-        pass
-    
-    def handle_controller_input(self, controller_state: ControllerState) -> None:
-        pass
-
-class MovementStateHandler(StateHandler):
-    def on_enter(self, previous_state: RobotState) -> None:
-        return super().on_enter(previous_state)
-    
-    def on_exit(self, next_state: RobotState) -> None:
-        self.sport_client.Move(0, 0, 0)
-
-    def handle_controller_input(self, controller_state: ControllerState) -> None:
-        pass
 
 class UnitreeRemoteControllerInputParser:
     def __init__(self) -> None:
@@ -152,75 +90,3 @@ class UnitreeRemoteControllerInputParser:
         previous_dict = {k: v for k, v in self._previous_state.__dict__.items() 
                         if k not in ['timestamp', 'changed']}
         return current_dict != previous_dict
-
-
-class CallbackManager:
-    def __init__(self) -> None:
-        self._callbacks: Dict[str, CallbackInfo] = {}
-        self._execution_lock = threading.Lock()
-        self._execution_pool = ThreadPoolExecutor(max_workers=4)
-
-    def register_callback(
-            self, 
-            callback: Callable[[ControllerState], None],
-            priority: CallbackPriority = CallbackPriority.MEDIUM,
-            states: Optional[List[RobotState]] = None,
-            name: Optional[str] = None
-    ) -> str:
-        if states is None:
-            states = list(RobotState)
-
-        callback_id = name or callback.__name__
-
-        self._callbacks[callback_id] = CallbackInfo(
-            callback=callback,
-            priority=priority,
-            states=states,
-            name=callback_id,
-            enabled=True
-        )
-
-        return callback_id
-
-    def unregister_callback(self, callback_id: str) -> bool:
-        return self._callbacks.pop(callback_id, None) is not None
-    
-    def enable_callback(self, callback_id: str, enabled: bool = True) -> bool:
-        if (callback_id in self._callbacks):
-            self._callbacks[callback_id].enabled = enabled
-            return True
-        
-        return False
-    
-    def clear_callbacks(self) -> None:
-        self._callbacks.clear()
-    
-    def execute_callbacks(self, controller_state: ControllerState, current_state: RobotState) -> None:
-        if not controller_state.changed:
-            return
-        
-        to_call = [
-            callback for callback in self._callbacks.values()
-            if callback.enabled and current_state in callback.states
-        ]
-
-        to_call.sort(key=lambda x: x.priority.value, reverse=True)
-
-        with self._execution_lock:
-            for callback_info in to_call:
-                if callback_info.priority == CallbackPriority.CRITICAL:
-                    self._execute_callback_sync(callback_info, controller_state)
-                else:
-                    self._execution_pool.submit(
-                        self._execute_callback_sync,
-                        callback_info,
-                        controller_state
-                    )
-
-    def _execute_callback_sync(self, callback_info: CallbackInfo, controller_state: ControllerState) -> None:
-        try:
-            callback_info.callback(controller_state)
-        except Exception as e:
-            print(f"Callback {callback_info.name} failed: {e}")
-
-

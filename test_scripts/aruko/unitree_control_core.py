@@ -12,6 +12,10 @@ import cv2
 import numpy as np
 
 
+# Look into this later: https://www.reddit.com/r/Python/comments/9e2d79/evil_python_trick_block_another_module_from_being
+# It outlines blocking import of modules using sys.modules dict.
+
+
 @dataclass
 class ControllerState:
     lx: float = 0.0
@@ -183,7 +187,6 @@ class DogFunctionalityWrapper:
             self.cap.release()
 
 
-
 _ANALOG_SIGNALS = {
     InputSignal.LEFT_STICK_X, InputSignal.LEFT_STICK_Y,
     InputSignal.RIGHT_STICK_X, InputSignal.RIGHT_STICK_Y,
@@ -318,7 +321,7 @@ class _InputHandler:
 
     
     def shutdown(self) -> None:
-        self.lowstate_subscriber.Close() # cleanup resources and unsubscribe from Lowstate_ topic
+        self.lowstate_subscriber.Close()
         self.callback_manager.shutdown()
 
     

@@ -1,12 +1,12 @@
 import time
 import cv2
+import os
+import signal
 
 from aruko_helpers import *
 from unitree_control_core import *
 
 from enum import Enum
-from typing import Any
-from abc import ABC, abstractmethod
 
 
 class MarkerMappings(Enum):
@@ -218,7 +218,7 @@ class RespondToMarkerState(DogStateAbstract):
             print("[Respond] STOP command received")
             self.functionality_wrapper.stop_dog()
             time.sleep(0.5)
-            self.functionality_wrapper.sport_client.StandDown()
+            self.functionality_wrapper._sport_client.StandDown()
             return True
         
         elif self.marker_id in (MarkerMappings.LEFT_MARKER.value, MarkerMappings.RIGHT_MARKER.value):
@@ -249,64 +249,67 @@ class RespondToMarkerState(DogStateAbstract):
 
 
 
-def cleanup(functionality_wrapper: DogFunctionalityWrapper):
-    cv2.destroyAllWindows()
-    functionality_wrapper.stop_dog()
-    time.sleep(1)
-    functionality_wrapper.cleanup()
+class Main:
+    def __init__(self):
+        self.functionality_wrapper = DogFunctionalityWrapper(self.shutdown_callback)
+        
+
+    def main_move(self):
+        input("Press Enter to start autonomous movement...")
+
+        window_title = "Aruko Detection"
+        cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
+
+        search_range = 70
+        search_delta = 0.5
+        max_sweeps = 3
+
+        scan_state = ScanForMarkerState(self.functionality_wrapper, window_title, search_range, search_delta, max_sweeps)
+        walk_state = WalkToMarkerState(self.functionality_wrapper, window_title)
+        respond_state = RespondToMarkerState(self.functionality_wrapper, window_title)
+
+        print("\n[Autonomous Mode] Starting continuous operation.")
+        print("  - Press Ctrl+C or trigger remote A button to stop.\n")
+
+        try:
+            while True:
+                fiducial_found, marker_id = scan_state.execute()
+
+                if not fiducial_found:
+                    continue
+
+                has_arrived, arrived_marker_id = walk_state.execute()
+
+                if not has_arrived:
+                    continue
+
+                time.sleep(1)
+                respond_state.set_marker_id(arrived_marker_id)
+                should_exit = respond_state.execute()
+
+                if should_exit:
+                    self.functionality_wrapper.safe_shutdown() 
+                    time.sleep(1) 
+                    break
+
+        except KeyboardInterrupt:
+            self.functionality_wrapper.safe_shutdown() 
+
+        except Exception as e:
+            print(f"Unhandled error: {e}")
+            self.functionality_wrapper.safe_shutdown() 
 
 
-def main_move():
-    input("Press Enter to start autonomous movement...")
+    def shutdown_callback(self, _):
+        cv2.destroyAllWindows()
+        print("[Shutdown] Killing Program...")
+        time.sleep(1)
 
+        os.kill(os.getpid(), signal.SIGINT)
 
-    functionality_wrapper = DogFunctionalityWrapper()
-    stop_monitor = DogFunctionalityWrapper.StopMonitor(functionality_wrapper.stop_event, cleanup)
-    stop_monitor.start()
-
-    window_title = "Aruko Detection"
-    cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
-
-    search_range = 70
-    search_delta = 0.5
-    max_sweeps = 3
-
-    scan_state = ScanForMarkerState(functionality_wrapper, window_title, search_range, search_delta, max_sweeps)
-    walk_state = WalkToMarkerState(functionality_wrapper, window_title)
-    respond_state = RespondToMarkerState(functionality_wrapper, window_title)
-
-    print("\n[Autonomous Mode] Starting continuous operation.")
-    print("  - Press Ctrl+C or trigger remote A button to stop.\n")
-
-    try:
-        while True:
-            fiducial_found, marker_id = scan_state.execute()
-
-            if not fiducial_found:
-                continue
-
-            has_arrived, arrived_marker_id = walk_state.execute()
-
-            if not has_arrived:
-                continue
-
-            time.sleep(1)
-            respond_state.set_marker_id(arrived_marker_id)
-            should_exit = respond_state.execute()
-
-            if should_exit:
-                functionality_wrapper.stop_event.set() 
-                time.sleep(1) 
-                break
-
-    except KeyboardInterrupt:
-        functionality_wrapper.stop_event.set() 
-
-    except Exception as e:
-        print(f"Unhandled error: {e}")
-        functionality_wrapper.stop_event.set()
 
 
 
 if __name__ == "__main__":
-    main_move()
+    main = Main()
+    main.main_move()

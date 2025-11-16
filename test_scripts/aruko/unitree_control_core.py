@@ -1,20 +1,32 @@
-from abc import ABC, abstractmethod
+import ast
+import inspect
 import struct
 import sys
+import textwrap
 import time
+from abc import ABC, ABCMeta, abstractmethod
+from enum import Enum
 
-from typing import Any, Callable, Dict, List, Optional
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from typing import Any, Dict, List, Optional, final
 
 import cv2
 import numpy as np
 
-
 # Look into this later: https://www.reddit.com/r/Python/comments/9e2d79/evil_python_trick_block_another_module_from_being
 # It outlines blocking import of modules using sys.modules dict.
 
+
+# =============================================================================
+# RULES:
+#
+# - Classes and class attributes starting with "_" are internal and should NOT 
+#   be accessed or modified.
+#
+# - Classes and attributes without a leading "_" are EXPOSED: they can be 
+#   accessed or inherited from, but should not be tampered with directly.
+# =============================================================================
 
 @dataclass
 class ControllerState:
@@ -75,7 +87,7 @@ class InputSignal(Enum):
     F3 = "f3"
 
 
-
+@final
 class DogFunctionalityWrapper:
     """Wrapper for Unitree dog functionality with fallback to webcam simulation."""
     
@@ -83,6 +95,9 @@ class DogFunctionalityWrapper:
         self._use_unitree_sdk_methods = False
         self._max_rotation_amount = 5
         self._max_movement_amount = 5
+
+        self._root_cleanup_callback: Callable[[ControllerState], None] = shutdown_callback
+        self.shutdown_flag = False
 
         try:
             from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_
@@ -107,7 +122,6 @@ class DogFunctionalityWrapper:
             print("[Init] Connecting stop key override")
             self.input_handler = _InputHandler(ChannelSubscriber, LowState_)
             self.input_handler.register_callback(InputSignal.BUTTON_A, shutdown_callback, "on_emergency_stop")
-            self._root_cleanup_callback = shutdown_callback
 
             print("[Init] Standing up and stopping movement")
             self._sport_client.StandUp()
@@ -174,14 +188,21 @@ class DogFunctionalityWrapper:
 
     def safe_shutdown(self):
         print("\n[Shutdown] Starting Safe Shutdown...")
-        self._root_cleanup_callback(ControllerState()) # default controller state
+        if self._root_cleanup_callback:
+            try:
+                self._root_cleanup_callback(ControllerState()) # default controller state
+            except Exception as e:
+                print(f"[Wrapper] root cleanup callback failed: {e}")
+                
         self.cleanup()
         
 
     def cleanup(self):
-        """Clean up resources."""
-        self.input_handler.shutdown()
+        """Clean up internal resources."""
         self.stop_dog()
+
+        if self._use_unitree_sdk_methods:
+            self.input_handler.shutdown()
         
         if not self._use_unitree_sdk_methods:
             self.cap.release()
@@ -193,6 +214,7 @@ _ANALOG_SIGNALS = {
     InputSignal.LEFT_TRIGGER, InputSignal.RIGHT_TRIGGER
 }
 
+
 @dataclass
 class _Callback:
     callback: Callable[[ControllerState], None]
@@ -203,8 +225,8 @@ class _Callback:
 
 class _InputSignalCallbackManager:
     def __init__(self):
-        self.callbacks: Dict[InputSignal, List[_Callback]] = {}
-        self.previous_state = ControllerState()
+        self._callbacks: Dict[InputSignal, List[_Callback]] = {}
+        self._previous_state = ControllerState()
 
     def register(
             self,
@@ -220,32 +242,32 @@ class _InputSignalCallbackManager:
             threshold=threshold
         )
 
-        self.callbacks.setdefault(signal, []).append(cb)
+        self._callbacks.setdefault(signal, []).append(cb)
         return cb
 
 
     def unregister(self, signal: InputSignal, callback: Callable[[ControllerState], None]):
-        if signal in self.callbacks:
-            self.callbacks[signal] = [cb for cb in self.callbacks[signal] if cb.callback != callback]
+        if signal in self._callbacks:
+            self._callbacks[signal] = [cb for cb in self._callbacks[signal] if cb.callback != callback]
             
-            if not self.callbacks[signal]:
-                del self.callbacks[signal]
+            if not self._callbacks[signal]:
+                del self._callbacks[signal]
 
 
     def handle(self, state: ControllerState):
         if not state.changed:
             return
 
-        for signal, cb_list in self.callbacks.items():
+        for signal, cb_list in self._callbacks.items():
             for cb in cb_list:
                 if self._should_trigger(signal, cb, state):
                     self._execute(cb, state)
 
-        self.previous_state = ControllerState(**state.__dict__)
+        self._previous_state = ControllerState(**state.__dict__)
 
 
     def shutdown(self):
-        self.callbacks.clear()
+        self._callbacks.clear()
 
 
     def _execute(self, cb: _Callback, state: ControllerState):
@@ -267,7 +289,7 @@ class _InputSignalCallbackManager:
             return False
         
         current_value = getattr(current_state, signal_attr, 0.0)
-        previous_value = getattr(self.previous_state, signal_attr, 0.0)
+        previous_value = getattr(self._previous_state, signal_attr, 0.0)
 
         if signal in _ANALOG_SIGNALS:
             return self._check_analog_trigger(current_value, previous_value, cb)
@@ -281,8 +303,8 @@ class _InputSignalCallbackManager:
         
         current_x = getattr(current_state, x_attr, 0.0)
         current_y = getattr(current_state, y_attr, 0.0)
-        previous_x = getattr(self.previous_state, x_attr, 0.0)
-        previous_y = getattr(self.previous_state, y_attr, 0.0)
+        previous_x = getattr(self._previous_state, x_attr, 0.0)
+        previous_y = getattr(self._previous_state, y_attr, 0.0)
         
         # vector magnitude of x and y components
         distance = ((current_x - previous_x) ** 2 + (current_y - previous_y) ** 2) ** 0.5
@@ -299,11 +321,11 @@ class _InputSignalCallbackManager:
 
 class _InputHandler:
     def __init__(self, ChannelSubscriber, LowState_):
-        self.input_parser = _UnitreeRemoteControllerInputParser()
-        self.callback_manager = _InputSignalCallbackManager()
+        self._input_parser = _UnitreeRemoteControllerInputParser()
+        self._callback_manager = _InputSignalCallbackManager()
             
-        self.lowstate_subscriber = ChannelSubscriber("rt/lf/lowstate", LowState_)
-        self.lowstate_subscriber.Init(self._process_input, 10)
+        self._lowstate_subscriber = ChannelSubscriber("rt/lf/lowstate", LowState_)
+        self._lowstate_subscriber.Init(self._process_input, 10)
 
 
     def register_callback(
@@ -313,21 +335,21 @@ class _InputHandler:
             name: Optional[str] = None,
             threshold: float = 0.1
         ):
-        return self.callback_manager.register(signal, callback, name, threshold)
+        return self._callback_manager.register(signal, callback, name, threshold)
     
     
     def unregister_callback(self, signal: InputSignal, callback: Callable[[ControllerState], None]):
-        self.callback_manager.unregister(signal, callback)
+        self._callback_manager.unregister(signal, callback)
 
     
     def shutdown(self) -> None:
-        self.lowstate_subscriber.Close()
-        self.callback_manager.shutdown()
+        self._lowstate_subscriber.Close()
+        self._callback_manager.shutdown()
 
-    
+
     def _process_input(self, msg) -> ControllerState:
-        controller_state = self.input_parser.parse(msg.wireless_remote)
-        self.callback_manager.handle(controller_state)
+        controller_state = self._input_parser.parse(msg.wireless_remote)
+        self._callback_manager.handle(controller_state)
         return controller_state
 
 
@@ -374,3 +396,102 @@ class _UnitreeRemoteControllerInputParser:
         )
     
         return self._state
+
+
+class _LoopCancellationInjector(ast.NodeTransformer):
+    def _create_check_node(self, lineno=0, col_offset=0) -> ast.Expr:
+        return ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Name(id="self", ctx=ast.Load()),
+                    attr="check_shutdown",
+                    ctx=ast.Load()
+                ),
+                args=[],
+                keywords=[]
+            ),
+            lineno=lineno,
+            col_offset=col_offset
+        )
+
+    def visit_While(self, node) -> Any:
+        self.generic_visit(node)
+        check_node = self._create_check_node(
+            lineno=getattr(node, "lineno", 0),
+            col_offset=getattr(node, "col_offset", 0)
+        )
+        node.body.insert(0, check_node)
+        return node
+    
+    def visit_For(self, node) -> Any:
+        self.generic_visit(node)
+        check_node = self._create_check_node(
+            lineno=getattr(node, "lineno", 0),
+            col_offset=getattr(node, "col_offset", 0)
+        )
+        node.body.insert(0, check_node)
+        return node
+
+
+class _CancellableMeta(ABCMeta):
+    def __new__(mcls, name, bases, attrs):
+        if "execute" in attrs and inspect.isfunction(attrs["execute"]):
+            original = attrs["execute"]
+
+            try:
+                src = inspect.getsource(original) # get source code 
+                src = textwrap.dedent(src) # removing indentation -> needed for parsing with AST
+                tree = ast.parse(src) # parse into AST
+
+                injector = _LoopCancellationInjector()
+                new_tree = injector.visit(tree)
+                ast.fix_missing_locations(new_tree) # fixes line numbers and other metadata for compilation -> cleanup
+
+                env = original.__globals__.copy()
+                local_env: Dict[str, Any] = {}
+
+                compiled = compile(new_tree, filename="<ast>", mode="exec") # convert the new AST into executable python code
+                exec(compiled, env, local_env) # runs in original context to make sure things like "self" still work
+
+                # if compilation succeeds... the new function replaces the old execute
+                new_func = local_env.get(original.__name__)
+                if new_func is not None:
+                    new_func.__defaults__ = original.__defaults__
+                    new_func.__kwdefaults__ = original.__kwdefaults__
+                    attrs["execute"] = new_func
+                else:
+                    attrs["execute"] = original
+
+            except (OSError, IOError, TypeError, IndentationError, SyntaxError, ValueError) as e:
+                attrs["execute"] = original # leave as is if exception is raised
+
+        return super().__new__(mcls, name, bases, attrs)
+
+
+class DogStateAbstract(ABC, metaclass=_CancellableMeta):
+    """Abstract base class for dog behavior states."""
+    
+    def __init__(self, functionality_wrapper: DogFunctionalityWrapper):
+        super().__init__()
+        self.functionality_wrapper = functionality_wrapper
+        self.is_running = False
+        self.should_cancel = False
+
+    @abstractmethod
+    def execute(self, *args, **kwargs) -> Any: # might have preserve var args in source gen?
+        pass
+
+    def on_enter(self):
+        self.is_running = True
+        self.should_cancel = False
+
+    def on_exit(self):
+        self.is_running = False
+
+    @final
+    def check_shutdown(self):
+        if self.functionality_wrapper is not None and self.functionality_wrapper.shutdown_flag == True:
+            raise InterruptedError()
+
+    def cancel(self):
+        self.should_cancel = True

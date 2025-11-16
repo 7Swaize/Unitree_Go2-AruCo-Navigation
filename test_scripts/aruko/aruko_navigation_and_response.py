@@ -4,7 +4,7 @@ import os
 import signal
 
 from aruko_helpers import *
-from unitree_control_core import *
+from unitree_control_core import * # enforce students importing with *
 
 from enum import Enum
 
@@ -14,30 +14,6 @@ class MarkerMappings(Enum):
     STOP_MARKER = 0
     RIGHT_MARKER = 1
     LEFT_MARKER = 2
-
-
-class DogStateAbstract(ABC):
-    """Abstract base class for dog behavior states."""
-    
-    def __init__(self, functionality_wrapper: DogFunctionalityWrapper):
-        super().__init__()
-        self.functionality_wrapper = functionality_wrapper
-        self.is_running = False
-        self.should_cancel = False
-
-    @abstractmethod
-    def execute(self) -> Any:
-        pass
-
-    def on_enter(self):
-        self.is_running = True
-        self.should_cancel = False
-
-    def on_exit(self):
-        self.is_running = False
-
-    def cancel(self):
-        self.should_cancel = True
 
 
 class ScanForMarkerState(DogStateAbstract):
@@ -222,7 +198,7 @@ class RespondToMarkerState(DogStateAbstract):
             return True
         
         elif self.marker_id in (MarkerMappings.LEFT_MARKER.value, MarkerMappings.RIGHT_MARKER.value):
-            rotation_amount = 150
+            rotation_amount = 150 # this is 90 degrees somehow
             step_amount = 1
 
             if self.marker_id == MarkerMappings.RIGHT_MARKER.value:

@@ -25,15 +25,3 @@ Designed for future students to build on, enabling practical use of the robot fo
 2. **Approach**: Aligns horizontally using offset threshold, moves forward until marker area exceeds threshold (distance heuristic)
 3. **Respond**: Executes command based on marker ID. STOP sits down and exits. LEFT/RIGHT rotates ~90° then continues scanning
 4. Loop repeats until STOP marker
-
-## State Pattern
-
-All states inherit from `DogStateAbstract` with metaclass that injects `check_shutdown()` calls into loops (allows emergency stop mid-execution). Each state implements `execute()` and handles its own visual feedback via OpenCV overlays.
-
-## Controller Integration
-
-`_InputHandler` parses Unitree wireless remote data (analog sticks, buttons). `_InputSignalCallbackManager` handles threshold-based triggering for analog inputs and edge detection for digital buttons. A button mapped to emergency shutdown.
-
-## Fallback Mode
-
-If Unitree SDK not detected, uses webcam (cv2.VideoCapture). Movement commands become no-ops but visualization/logic still runs for testing marker detection algorithms.

@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 import struct
 from typing import Callable, Dict, List, Optional
-from unitree_control.controller_input.controller_state import ControllerState
-from unitree_control.controller_input.input_signal import InputSignal
+from unitree_control.controller_input_control.controller_state import ControllerState
+from unitree_control.controller_input_control.input_signal import InputSignal
 
 
 _ANALOG_SIGNALS = {

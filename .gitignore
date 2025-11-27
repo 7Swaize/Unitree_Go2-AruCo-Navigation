@@ -1,7 +1,7 @@
 *
 
 !.gitignore
-!test_scripts/
-!test_scripts/**
+!unitree_control/
+!unitree_control/**
 
 .vscode/

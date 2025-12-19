@@ -58,7 +58,6 @@ class UnitreeSDKHardware(HardwareInterface):
         from unitree_sdk2py.core.channel import ChannelFactoryInitialize
         from unitree_sdk2py.go2.sport.sport_client import SportClient
         
-        print("[SDK] Initializing ChannelFactory")
         if len(sys.argv) > 1:
             ChannelFactoryInitialize(0, sys.argv[1])
         else:

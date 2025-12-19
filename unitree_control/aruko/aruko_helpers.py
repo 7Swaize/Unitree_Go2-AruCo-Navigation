@@ -55,7 +55,7 @@ def get_aruko_marker(image):
 
 
 def extract_data_from_marker(image, corners, ids):
-    """Extract all relevant data from detected marker."""
+    """Extract all relevant data from detected marker (first marker found)."""
     if corners is None or len(corners) == 0 or ids is None or len(ids) == 0:
         return -1, [(0, 0)], (0, 0), 0, 0
 
@@ -68,3 +68,26 @@ def extract_data_from_marker(image, corners, ids):
     fiducial_area = get_fiducial_area_from_corners(c0, c1, c2, c3)
 
     return marker_id, bounds, fiducial_center, h_offset, fiducial_area
+
+
+def extract_data_from_marker_by_id(image, corners, ids, target_marker_id):
+    """
+    Extract data from a specific marker ID.
+    Only returns data if the target marker is found, otherwise returns -1 for marker_id.
+    This prevents the robot from getting stuck looking at incorrect markers.
+    """
+    if corners is None or len(corners) == 0 or ids is None or len(ids) == 0:
+        return -1, [(0, 0)], (0, 0), 0, 0
+
+    for i, marker_id in enumerate(ids):
+        if int(marker_id[0]) == target_marker_id:
+            bounds = [(int(x), int(y)) for x, y in corners[i][0]]
+            
+            c0, c1, c2, c3 = extract_corners_points(corners[i][0])
+            fiducial_center = compute_fiducial_center_point(c0, c2)
+            h_offset = determine_horizontal_offset(image, fiducial_center, image.shape[1])
+            fiducial_area = get_fiducial_area_from_corners(c0, c1, c2, c3)
+            
+            return target_marker_id, bounds, fiducial_center, h_offset, fiducial_area
+    
+    return -1, [(0, 0)], (0, 0), 0, 0

@@ -32,9 +32,10 @@ class UnitreeGo2Controller:
         self._shutdown_lock = threading.Lock()
         self._cleanup_callbacks: List[Callable[[], None]] = []
 
-        self.hardware: HardwareInterface = (
+        self._hardware: HardwareInterface = (
             UnitreeSDKHardware() if use_sdk else SimulatedHardware()
         )
+        self._hardware.initialize()
 
         self._modules: Dict[ModuleType, DogModule] = {}
         self._register_all_modules()
@@ -54,7 +55,7 @@ class UnitreeGo2Controller:
         
 
     def _initialize_all(self):
-        self.hardware.initialize()
+        self._hardware.initialize()
 
         if self.use_sdk:
             self.input.register_callback(
@@ -66,13 +67,13 @@ class UnitreeGo2Controller:
 
     def _register_all_modules(self):
         self._add_module(ModuleType.VIDEO, use_sdk=self.use_sdk)
-        self._add_module(ModuleType.MOVEMENT, hardware=self.hardware)
+        self._add_module(ModuleType.MOVEMENT, hardware=self._hardware)
         self._add_module(ModuleType.OCR)
         self._add_module(ModuleType.AUDIO)
 
         if self.use_sdk:
             self._add_module(ModuleType.INPUT, use_sdk=self.use_sdk)
-            self._add_module(ModuleType.LIDAR, use_sdk=self.use_sdk, visualize_lidar=False)
+            # self._add_module(ModuleType.LIDAR, use_sdk=self.use_sdk, visualize_lidar=False)
 
 
     def _add_module(self, module_type: ModuleType, **kwargs) -> None:
@@ -184,7 +185,7 @@ class UnitreeGo2Controller:
                     print(f"[Controller] Cleanup callback failed: {e}")
             
             try:
-                self.hardware.shutdown()
+                self._hardware.shutdown()
             except Exception as e:
                 print(f"[Controller] Hardware shutdown failed: {e}")
             
